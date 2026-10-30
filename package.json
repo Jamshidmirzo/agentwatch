@@ -1,0 +1,20 @@
+{
+  "name": "agentwatch",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Локальный офис-дашборд за сессиями Claude Code",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "hook:install": "node bin/hook.js install",
+    "hook:uninstall": "node bin/hook.js uninstall"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.314",
+    "three": "0.170.0"
+  }
+}

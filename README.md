@@ -1,24 +1,38 @@
-# AgentWatch
+# AgentWatch — офис агентов
 
-Локальный дашборд за живыми сессиями Claude Code (Terminal + VS Code) на этой машине.
+Локальный 3D-офис в стиле Apple за всеми сессиями Claude Code на этой машине.
+Каждый проект — своя зона со столами; агенты-роботы работают за iMac. Когда агенту нужен
+ответ, он встаёт и идёт к **моему столу** — оттуда отвечаешь на вопрос, даёшь разрешение,
+одобряешь план. Агентов, нанятых из офиса, можно вести полностью: модель, effort, режим, сообщения.
 
 ```
-./start.sh          # http://localhost:4777
-PORT=5000 ./start.sh
+npm install            # один раз (three + Agent SDK)
+./start.sh             # http://localhost:4777, лог ~/.agentwatch.log
+npm run hook:install   # глобальный http-хук PermissionRequest (бэкап settings.json рядом)
+npm run hook:uninstall
 ```
 
-Зависимостей нет (Node ≥ 18).
+## Что умеет
+| | Наёмные (★, запущены из офиса) | Внешние (VS Code / Terminal) |
+|---|---|---|
+| Видно в офисе, идут к столу | ✓ | ✓ |
+| Ответ на вопрос / разрешение / план со стола | ✓ (canUseTool) | ✓ через хук (новые запросы) |
+| Модель, effort, режим на лету | ✓ | ✗ — Claude Code не даёт менять снаружи |
+| Сообщение агенту | ✓ | VS Code: открыть сессию с готовым текстом |
+| Прервать / уволить / вернуть (resume) | ✓ | — |
+| Перейти в окно | — | ✓ (deep-link VS Code, вкладка Terminal) |
 
-## Откуда данные
-- `~/.claude/sessions/*.json` — реестр живых процессов Claude Code: pid, cwd, status (`busy` / `idle` / `waiting`), `waitingFor`.
-- `~/.claude/projects/<slug>/<sessionId>.jsonl` — хвост транскрипта: AI-заголовок сессии, последний промпт, последний ответ, незавершённый tool_use (в т.ч. `AskUserQuestion` → текст вопроса и варианты).
-- Terminal.app через AppleScript — соответствие tty → вкладка.
+Хоткеи: `I` — мой стол, `N` — нанять, `1–9` — вариант ответа, `Enter` — главная кнопка, `J/K` — по очереди, `Esc`.
 
-## Прыжок в сессию
-- VS Code: `vscode://anthropic.claude-code/open?session=<id>` (deep link расширения).
-- Terminal: AppleScript выбирает вкладку по tty и выводит окно вперёд.
+## Как устроено
+- `lib/registry.js` — внешние сессии: `~/.claude/sessions/*.json` (status busy|idle|waiting), хвост транскрипта, сабагенты.
+- `lib/hosted.js` — наёмные агенты через `@anthropic-ai/claude-agent-sdk`, запускается установленный `~/.local/bin/claude` под твоим логином. Метаданные — `~/.agentwatch/hosted.json`. Наёмные живут, пока жив сервер; после перезапуска — «Нанять → Вернуть на работу».
+- `lib/inbox.js` — очередь «моего стола», общий формат решения для SDK и хука.
+- `lib/hookbridge.js` — http-хук `PermissionRequest`. Claude Code показывает свой диалог **параллельно** с хуком: кто ответил первым, тот и решил. Если ответил в самой сессии — запрос пропадает со стола; если сервер выключен — хук сразу отваливается, всё как обычно.
+- `lib/security.js` — только 127.0.0.1, проверка Host, токен `X-AW-Token` на все мутации, отдельный токен хука в `~/.agentwatch/token`.
+- `office/` — фронт: Three.js-сцена (`scene.js`, `robot.js`), панели (`app.js`), стили.
 
-## Дальше (идеи)
-- Ответ прямо из дашборда через `/tmp/cc-socks/<pid>.sock`.
-- Hook `Notification` в settings.json → мгновенный push вместо 2-секундного опроса.
-- Выкатить на сервер + Telegram-пуш, когда агент ждёт.
+## Проверено (2.1.296, SDK 0.3.314)
+- SDK работает под логином Claude Code (`apiKeySource: none`).
+- Хук и `canUseTool` срабатывают одновременно; ответ хука с `updatedInput.answers` закрывает AskUserQuestion, в т.ч. в bypassPermissions.
+- E2E: вопрос → ответ со стола → Write → «Разрешить» → файл создан; смена модели/effort/режима; сообщение; resume.
