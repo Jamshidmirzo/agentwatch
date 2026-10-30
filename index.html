@@ -52,6 +52,20 @@
   .conn { font-size: 12px; color: var(--dim); }
   .conn.off { color: var(--red); }
 
+  .scene { position: relative; max-width: 1480px; height: 312px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; margin: 0 auto 26px; border-radius: 18px; border: 1px solid var(--line); background: #161920; box-shadow: 0 20px 60px -30px rgba(0,0,0,.8); }
+  .scene canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+  .ftip { position: absolute; z-index: 2; left: 0; top: 0; max-width: 300px; pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .15s, transform .15s; background: rgba(14,16,21,.95); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 10px 12px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 14px 36px rgba(0,0,0,.55); backdrop-filter: blur(8px); }
+  .ftip.show { opacity: 1; transform: none; }
+  .ftip b { display: block; font-size: 13.5px; margin-bottom: 2px; }
+  .ftip .m { color: var(--dim); font-size: 11.5px; font-family: var(--mono); margin-bottom: 6px; }
+  .ftip .st { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .ftip .st.b { color: #9fc2ff; } .ftip .st.w { color: #ff8a80; } .ftip .st.w.a { color: var(--amber); }
+  .ftip .q { margin-top: 4px; color: #e6e8ee; word-break: break-word; }
+  .ftip .q code { font-family: var(--mono); color: #9fc2ff; }
+  .ftip .subs { margin-top: 6px; color: var(--muted); font-size: 11.5px; }
+  .ftip .hint { margin-top: 7px; color: var(--dim); font-size: 11px; }
+  .card.hl { border-color: rgba(255,255,255,.4); transform: translateY(-2px); }
+  .sub .subs { color: #c3a6ff; flex: none; }
   main { display: grid; gap: 26px; max-width: 1480px; margin: 0 auto; }
   section .ph { display: flex; align-items: baseline; gap: 10px; margin: 0 4px 10px; }
   section .ph h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0; }
@@ -115,7 +129,7 @@
   .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0; background: #23262e; border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px; font-size: 13px; transition: .25s; pointer-events: none; }
   .toast.show { opacity: 1; transform: translateX(-50%); }
   .empty { color: var(--dim); text-align: center; padding: 80px 0; font-size: 15px; }
-  @media (max-width: 720px) { body { padding: 0 14px 40px; } header { margin: 0 -14px 14px; padding-left: 14px; padding-right: 14px; flex-wrap: wrap; gap: 10px; } .grid { grid-template-columns: 1fr; } }
+  @media (max-width: 720px) { .scene { border-radius: 14px; margin-bottom: 18px; } body { padding: 0 14px 40px; } header { margin: 0 -14px 14px; padding-left: 14px; padding-right: 14px; flex-wrap: wrap; gap: 10px; } .grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -131,9 +145,11 @@
   <label class="toggle" id="tNotif"><span class="sw"></span>Уведомления</label>
   <span class="conn" id="conn">подключение…</span>
 </header>
+<div class="scene" id="scene"><canvas id="factory"></canvas><div class="ftip" id="ftip"></div></div>
 <main id="main"><div class="empty">Ищу живые сессии Claude Code…</div></main>
 <div class="toast" id="toast"></div>
 
+<script src="/factory.js"></script>
 <script>
 const $ = (s, r = document) => r.querySelector(s);
 const main = $('#main');
@@ -185,6 +201,7 @@ const rank = (s) => s.status === 'waiting' ? 0 : s.status === 'busy' ? 1 : 2;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200); }
 
 async function focus(pid) {
+  if (pid < 0) { toast('Это демо-робот'); return; }
   const r = await fetch('/api/focus/' + pid, { method: 'POST' }).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
   toast(r.ok ? (r.via === 'vscode' ? 'Открываю в VS Code' : r.result === 'ok' ? 'Переключил вкладку Terminal' : 'Вкладка Terminal не найдена') : 'Ошибка: ' + r.error);
 }
@@ -215,7 +232,7 @@ function cardHTML(s) {
   }
   return `
     <div class="top"><span class="dot"></span><span class="ttl" title="${esc(s.name)}">${esc(s.title || s.name)}</span><span class="env">${envLabel(s.entrypoint)}</span></div>
-    <div class="sub"><span class="path" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span><span class="age">· ${ago(s.updatedAt)} назад</span></div>
+    <div class="sub"><span class="path" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span><span class="age">· ${ago(s.updatedAt)} назад</span>${s.subagents?.length ? `<span class="subs">· 🛸 ${s.subagents.length}</span>` : ''}</div>
     ${body}
     <div class="foot"><span class="prompt" title="${esc(t.lastPrompt)}">${esc(t.lastPrompt ? '› ' + t.lastPrompt : '')}</span><button class="go">Перейти ↗</button></div>`;
 }
@@ -247,7 +264,7 @@ function render() {
     for (const s of ss) {
       keep.add(s.pid);
       let el = grid.querySelector(`.card[data-pid="${s.pid}"]`);
-      if (!el) { el = document.createElement('article'); el.className = 'card'; el.dataset.pid = s.pid; el.onclick = () => focus(s.pid); }
+      if (!el) { el = document.createElement('article'); el.className = 'card'; el.dataset.pid = s.pid; el.onclick = () => { window.Factory?.ping(s.pid); focus(s.pid); }; }
       const cls = `card ${s.status} ${s.attention ? s.attention.kind : ''}`;
       if (el.className !== cls) el.className = cls;
       const html = cardHTML(s);
@@ -284,11 +301,35 @@ function favicon(nW, nB) {
   $('#favicon').href = c.toDataURL();
 }
 
+// ---- демо: ?demo=1 подмешивает фейковых роботов, которые по кругу работают / спрашивают / просят разрешение ----
+const DEMO = new URLSearchParams(location.search).has('demo');
+function withDemo(sn) {
+  if (!DEMO) return sn;
+  const now = Date.now(), cyc = 9000, ph = Math.floor(now / cyc) % 3, since = Math.floor(now / cyc) * cyc;
+  const mk = (i, status, attention, extra = {}) => ({
+    pid: -i, sessionId: 'demo-' + i, project: 'demo-цех', cwd: '/demo/' + i, name: 'demo-' + i, entrypoint: 'cli',
+    startedAt: i, updatedAt: now, statusUpdatedAt: since + i, status, attention,
+    transcript: { lastPrompt: 'демо-задача', lastAssistantText: 'Готово, жду следующую задачу.', ...extra.transcript },
+    subagents: extra.subagents || [], title: extra.title,
+  });
+  const q = [{ question: 'Какую БД берём для прода?', options: ['Postgres', 'SQLite'] }];
+  return { ...sn, sessions: [...sn.sessions,
+    mk(1, ph === 0 ? 'busy' : 'waiting', ph === 0 ? null : ph === 1 ? { kind: 'question', text: q[0].question } : { kind: 'permission', text: 'Bash: rm -rf build' },
+      { title: 'Демо: миграция БД', transcript: { question: ph === 1 ? q : null, pendingTool: ph === 0 ? { name: 'Bash', summary: 'Run migrations' } : ph === 2 ? { name: 'Bash', summary: 'rm -rf build' } : null },
+        subagents: [{ type: 'Explore', description: 'Ищет модели' }, { type: 'Plan', description: 'План миграции' }, { type: 'Explore', description: 'Тесты' }] }),
+    mk(2, ph === 2 ? 'waiting' : 'busy', ph === 2 ? { kind: 'plan', text: 'Одобрить план' } : null, { title: 'Демо: рефакторинг API', transcript: { pendingTool: ph === 2 ? { name: 'ExitPlanMode', summary: 'Ждёт одобрения плана' } : { name: 'Edit', summary: 'src/api/routes.ts' } } }),
+    mk(3, 'idle', null, { title: 'Демо: лендинг' }),
+  ] };
+}
+
 // ---- SSE ----
+window.awFocus = focus;
+main.addEventListener('mouseover', (e) => { const c = e.target.closest('.card'); window.Factory?.highlight(c ? Number(c.dataset.pid) : null); });
+main.addEventListener('mouseleave', () => window.Factory?.highlight(null));
 function connect() {
   const es = new EventSource('/events');
   es.onopen = () => { $('#conn').textContent = 'live'; $('#conn').classList.remove('off'); };
-  es.onmessage = (e) => { snap = JSON.parse(e.data); render(); checkAlerts(); };
+  es.onmessage = (e) => { snap = withDemo(JSON.parse(e.data)); render(); checkAlerts(); window.Factory?.update(snap); };
   es.onerror = () => { $('#conn').textContent = 'нет связи с сервером'; $('#conn').classList.add('off'); es.close(); setTimeout(connect, 2000); };
 }
 connect();

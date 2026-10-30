@@ -130,6 +130,33 @@ function parseTranscript(file) {
   return parsed;
 }
 
+// Активные сабагенты: <slug>/<sessionId>/subagents/agent-*.meta.json без finished
+// и с транскриптом, который писался недавно (страховка от убитых процессов).
+const SUBAGENT_STALE_MS = 10 * 60 * 1000;
+const metaCache = new Map(); // meta path -> { mtimeMs, meta }
+function activeSubagents(tfile, sessionId) {
+  const dir = path.join(path.dirname(tfile), sessionId, 'subagents');
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  const now = Date.now();
+  for (const n of names) {
+    if (!n.endsWith('.meta.json')) continue;
+    const mp = path.join(dir, n);
+    let st; try { st = fs.statSync(mp); } catch { continue; }
+    let c = metaCache.get(mp);
+    if (!c || c.mtimeMs !== st.mtimeMs) {
+      try { c = { mtimeMs: st.mtimeMs, meta: JSON.parse(fs.readFileSync(mp, 'utf8')) }; } catch { continue; }
+      metaCache.set(mp, c);
+    }
+    if (c.meta.finished) continue;
+    let jt; try { jt = fs.statSync(mp.replace(/\.meta\.json$/, '.jsonl')).mtimeMs; } catch { jt = st.mtimeMs; }
+    if (now - jt > SUBAGENT_STALE_MS) continue;
+    out.push({ id: n.replace(/^agent-|\.meta\.json$/g, ''), type: c.meta.agentType || 'agent', description: c.meta.description || '' });
+  }
+  return out;
+}
+
 // ---------- Terminal tty → window map (for CLI sessions) ----------
 let ttyMap = { at: 0, byTty: {} };
 function refreshTtyMap() {
@@ -201,6 +228,7 @@ function scan() {
       title: (t && t.aiTitle) || (term && term.title.replace(/^[◐◑◒◓●○◉\s]+/, '')) || r.name,
       tty, terminal: term,
       transcript: t,
+      subagents: tfile ? activeSubagents(tfile, r.sessionId) : [],
       attention,
     });
   }
@@ -250,6 +278,10 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/' || url.pathname === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return fs.createReadStream(INDEX).pipe(res);
+  }
+  if (url.pathname === '/factory.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return fs.createReadStream(path.join(__dirname, 'factory.js')).pipe(res);
   }
   if (url.pathname === '/api/sessions') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
