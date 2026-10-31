@@ -260,3 +260,24 @@ textarea:focus, input[type=text]:focus { border-color: var(--blue-2); background
 }
 @media (max-width: 520px) { #bDesk { display: none; } .actions .btn.icon { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* реалистичный офис (real.js) */
+.bubble.compact { padding: 5px 12px 5px 5px; gap: 7px; }
+.bubble.compact span { font-size: 12px; font-weight: 600; color: var(--text); }
+.bubble i.plan { background: #af52de; animation: none; box-shadow: 0 0 0 3px rgba(175, 82, 222, .18); }
+.area-label { pointer-events: none; font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); text-shadow: 0 1px 0 rgba(255, 255, 255, .6); }
+.seat-tag small.m { color: var(--muted); }
+.seat-tag.away { opacity: .82; }
+
+/* «Готово» и смена режима */
+.pill.done { cursor: pointer; background: rgba(52, 199, 89, .13); color: #1f8a3c; }
+.pill.done b { color: #1f8a3c; } .pill.done i { background: #34c759; }
+@media (prefers-color-scheme: dark) { .pill.done, .pill.done b { color: #5fd47e; } }
+.badge.green { background: #248a3d; }
+.irow .ic.green { background: #34c759; color: #fff; }
+.kicker .k.green { color: #1f8a3c; }
+.ask-was { font-size: 12.5px; color: var(--muted); border-left: 2px solid var(--line); padding: 2px 0 2px 10px; margin: 2px 0 10px; white-space: pre-wrap; max-height: 5.6em; overflow: hidden; }
+.bubble i.done { background: #34c759; animation: none; box-shadow: 0 0 0 3px rgba(52, 199, 89, .2); }
+.zone-label em.d { color: #1f8a3c; background: rgba(52, 199, 89, .14); }
+.seg button.pend { box-shadow: inset 0 0 0 1.5px var(--blue-2); }
+.note.pend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text); }

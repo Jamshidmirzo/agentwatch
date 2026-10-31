@@ -11,27 +11,33 @@ const os = require('os');
 const registry = require('./lib/registry');
 const { Inbox } = require('./lib/inbox');
 const { HostedManager, MODES, EFFORTS } = require('./lib/hosted');
-const { HookBridge } = require('./lib/hookbridge');
+const { HookBridge, EXT_MODES } = require('./lib/hookbridge');
+const { Reports } = require('./lib/reports');
 const { RUN_TOKEN, hookToken, safeEq, hostOk } = require('./lib/security');
 
-const PORT = Number(process.env.PORT || 4777);
+const PORT = Number(process.env.AGENTWATCH_PORT || process.env.PORT || 4777);
 const SCAN_MS = 2000;
 const ROOT = __dirname;
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
 
 const inbox = new Inbox();
 const hosted = new HostedManager(inbox);
-const bridge = new HookBridge({ inbox, hosted });
+const bridge = new HookBridge({ inbox, hosted, onChange: () => schedule() });
+const reports = new Reports();
 const HOOK_TOKEN = hookToken();
 
 let external = [];
-let hookInstalled = false;
+let hookInstalled = false, modeHookInstalled = false;
+// хуки плагина (hooks/hooks.json) в settings.json не видны: офис из плагина или включённый плагин = хуки на месте
+const pluginHooks = (s) => process.env.AGENTWATCH_PLUGIN === '1' || Object.entries(s.enabledPlugins || {}).some(([k, v]) => v && k.startsWith('agentwatch@'));
 
 function checkHook() {
   try {
     const s = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
     hookInstalled = (s.hooks?.PermissionRequest || []).some((m) => (m.hooks || []).some((h) => h.type === 'http' && String(h.url).includes('/hook/permission')));
-  } catch { hookInstalled = false; }
+    modeHookInstalled = (s.hooks?.PreToolUse || []).some((m) => (m.hooks || []).some((h) => h.type === 'command' && String(h.command).includes('pretool.sh')));
+    if (pluginHooks(s)) hookInstalled = modeHookInstalled = true;
+  } catch { hookInstalled = modeHookInstalled = process.env.AGENTWATCH_PLUGIN === '1'; }
 }
 
 function snapshot() {
@@ -50,9 +56,13 @@ function snapshot() {
       ...s, transcript, controllable: false, answerable: !!it,
       attention: s.attention ? { ...s.attention, inboxId: it ? it.id : undefined } : it ? { kind: it.kind, text: it.toolName, inboxId: it.id } : null,
       status: it && s.status !== 'waiting' ? 'waiting' : s.status,
+      mode: bridge.modeOf(s), pendingMode: bridge.pendingMode(s.sessionId),
     };
   });
-  return { at: Date.now(), agents: [...ext, ...h], inbox: items, models: hosted.models, modes: MODES, efforts: EFFORTS, hookInstalled };
+  const agents = [...ext, ...h];
+  reports.observe(agents);
+  for (const a of agents) a.report = reports.get(a.key);
+  return { at: Date.now(), agents, inbox: items, models: hosted.models, modes: MODES, extModes: EXT_MODES, efforts: EFFORTS, hookInstalled, modeHookInstalled };
 }
 
 // ---------- SSE ----------
@@ -86,7 +96,7 @@ function readBody(req, limit = 1 << 20) {
     req.on('error', reject);
   });
 }
-const MIME = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
+const MIME = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream', '.hdr': 'image/vnd.radiance' };
 function sendFile(res, file) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); return res.end('not found'); }
@@ -125,6 +135,9 @@ async function api(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  m = p.match(/^\/api\/reports\/([^/]+)\/ack$/);
+  if (m) { reports.ack(decodeURIComponent(m[1])); schedule(); return json(res, 200, { ok: true }); }
+
   m = p.match(/^\/api\/agents\/([^/]+)\/([a-z]+)$/);
   if (m) {
     const key = decodeURIComponent(m[1]), action = m[2];
@@ -144,8 +157,9 @@ async function api(req, res, url) {
     const s = findExternal(key);
     if (!s) return json(res, 404, { error: 'сессия не найдена' });
     if (action === 'focus') return registry.focus(s, (err, info) => json(res, err ? 500 : 200, err ? { error: err.message } : { ok: true, ...info }));
+    if (action === 'mode') { if (!modeHookInstalled) throw new Error('нужен хук смены режима: npm run hook:install'); const r = body.mode ? bridge.setMode(s, body.mode) : (bridge.clearMode(s.sessionId), { cancelled: true }); return json(res, 200, { ok: true, ...r }); }
     if (action === 'prefill') return registry.openWithPrompt(s, String(body.text || ''), (err, info) => json(res, err ? 500 : 200, err ? { error: err.message } : { ok: true, ...info }));
-    return json(res, 400, { error: 'внешней сессией так управлять нельзя — только в ней самой' });
+    return json(res, 400, { error: 'внешней сессии модель и effort меняются только в ней самой' });
   }
   return json(res, 404, { error: 'not found' });
 }
@@ -153,6 +167,8 @@ async function api(req, res, url) {
 // ---------- server ----------
 const INDEX = path.join(ROOT, 'index.html');
 const OFFICE = path.join(ROOT, 'office');
+// текстуры и мебель — в данных пользователя (переживают обновления плагина); для разработки — office/assets
+const ASSETS = [process.env.AGENTWATCH_ASSETS, path.join(os.homedir(), '.agentwatch', 'assets'), path.join(OFFICE, 'assets')].find((d) => d && fs.existsSync(path.join(d, 'tex'))) || path.join(os.homedir(), '.agentwatch', 'assets');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 
 const server = http.createServer(async (req, res) => {
@@ -170,6 +186,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(html);
     }
+    if (p.startsWith('/office/assets/')) { const f = within(ASSETS, p.slice('/office/assets/'.length)); return f ? sendFile(res, f) : json(res, 404, {}); }
     if (p.startsWith('/office/')) { const f = within(OFFICE, p.slice(8)); return f ? sendFile(res, f) : json(res, 404, {}); }
     if (p.startsWith('/vendor/three/')) {
       const rel = p.slice('/vendor/three/'.length);

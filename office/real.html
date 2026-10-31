@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Офис — реалистичный (демо)</title>
+<link rel="stylesheet" href="/office/style.css">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="stage" class="stage"></div>
+<script type="module">
+// Демо реалистичного офиса на тестовых данных — для рендеров дизайна, живые сессии не трогает.
+import { Office } from '/office/real.js';
+const now = Date.now(), min = 60e3;
+const A = (key, project, title, status, o = {}) => ({
+  key, kind: o.kind || 'external', project, title, status, startedAt: now - (o.started || 1) * 3600e3, statusUpdatedAt: now - (o.ago || 1) * min,
+  attention: o.att ? { kind: o.att } : null, subagents: Array.from({ length: o.subs || 0 }, (_, i) => ({ id: i })),
+});
+const state = { agents: [
+  A('w1', 'web-app', 'Каталог товаров', 'busy', { started: 9 }),
+  A('w2', 'web-app', 'Поиск с опечатками', 'waiting', { att: 'question', ago: 3, started: 8 }),
+  A('w3', 'web-app', 'Тёмная тема', 'idle', { ago: 4, started: 7 }),
+  A('w4', 'web-app', 'Push-уведомления', 'idle', { ago: 6, started: 6 }),
+  A('a1', 'api', 'Экспорт в CSV', 'idle', { ago: 5, started: 9 }),
+  A('a2', 'api', 'Оплата картой', 'busy', { subs: 2, started: 8 }),
+  A('a3', 'api', 'Голосовой помощник', 'idle', { ago: 40, started: 7 }),
+  A('a4', 'api', 'Падения сервиса ночью', 'waiting', { att: 'plan', ago: 12, started: 6 }),
+  A('m1', 'mobile', 'Онбординг', 'busy', { started: 9 }),
+  A('m2', 'mobile', 'Чистка кода', 'busy', { started: 8, kind: 'hosted' }),
+  A('m3', 'mobile', 'Сборка релиза', 'waiting', { att: 'permission', ago: 1, started: 7 }),
+] };
+const q = new URLSearchParams(location.search);
+const office = new Office(document.getElementById('stage'), {});
+if (q.get('theme')) office.setTheme(q.get('theme'), true);
+office.update(state);
+window.__office = office; window.__state = state;
+</script>
+</body>
+</html>

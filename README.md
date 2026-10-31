@@ -1,38 +1,110 @@
-# AgentWatch — офис агентов
+# AgentWatch — офис агентов Claude Code
 
-Локальный 3D-офис в стиле Apple за всеми сессиями Claude Code на этой машине.
-Каждый проект — своя зона со столами; агенты-роботы работают за iMac. Когда агенту нужен
-ответ, он встаёт и идёт к **моему столу** — оттуда отвечаешь на вопрос, даёшь разрешение,
-одобряешь план. Агентов, нанятых из офиса, можно вести полностью: модель, effort, режим, сообщения.
+Локальный 3D-офис за всеми сессиями Claude Code на твоём компьютере. Каждый проект — своя команда
+за столами у окон. Когда агенту нужен ответ, он встаёт и идёт к **моему столу**: оттуда отвечаешь
+на вопрос, даёшь разрешение, одобряешь план. Закончил задачу — тоже подходит, показать результат.
+Свободные отдыхают в лаунже. Режим (План / Auto / Авто-правки) меняется прямо из офиса.
+
+![Офис](docs/office.jpg)
+
+## Установка — плагин Claude Code
+
+В любой сессии Claude Code (2.1.275+):
 
 ```
-npm install            # один раз (three + Agent SDK)
-./start.sh             # http://localhost:4777, лог ~/.agentwatch.log
-npm run hook:install   # глобальный http-хук PermissionRequest (бэкап settings.json рядом)
-npm run hook:uninstall
+/plugin install agentwatch --marketplace Jamshidmirzo/agentwatch
 ```
+
+<details><summary>Старые версии Claude Code — в две команды</summary>
+
+```
+/plugin marketplace add Jamshidmirzo/agentwatch
+/plugin install agentwatch@agentwatch
+```
+</details>
+
+Дальше ничего делать не нужно: при старте следующей сессии офис сам поднимется в фоне.
+Открыть — **http://localhost:4777** или команда `/agentwatch` (покажет ссылку и состояние).
+Первый запуск ставит зависимости и качает текстуры (~1–2 минуты, лог `~/.agentwatch/server.log`).
+
+Удалить: `/plugin uninstall agentwatch`. Остановить офис до следующей сессии: `/agentwatch-stop`.
+
+### Для всей команды — без ввода команд
+
+Добавь в `.claude/settings.json` общего репозитория (закоммить):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "agentwatch": { "source": { "source": "github", "repo": "Jamshidmirzo/agentwatch" } }
+  },
+  "enabledPlugins": { "agentwatch@agentwatch": true }
+}
+```
+
+Каждый, кто откроет этот проект в Claude Code и доверит папке, получит предложение установить
+плагин — одним нажатием. Компаниям с управляемыми Mac то же самое можно раздать через managed settings.
 
 ## Что умеет
-| | Наёмные (★, запущены из офиса) | Внешние (VS Code / Terminal) |
-|---|---|---|
-| Видно в офисе, идут к столу | ✓ | ✓ |
-| Ответ на вопрос / разрешение / план со стола | ✓ (canUseTool) | ✓ через хук (новые запросы) |
-| Модель, effort, режим на лету | ✓ | ✗ — Claude Code не даёт менять снаружи |
-| Сообщение агенту | ✓ | VS Code: открыть сессию с готовым текстом |
-| Прервать / уволить / вернуть (resume) | ✓ | — |
-| Перейти в окно | — | ✓ (deep-link VS Code, вкладка Terminal) |
 
-Хоткеи: `I` — мой стол, `N` — нанять, `1–9` — вариант ответа, `Enter` — главная кнопка, `J/K` — по очереди, `Esc`.
+![Мой стол](docs/desk.jpg)
+
+| | Свои сессии (VS Code / Terminal) | Нанятые из офиса (★) |
+|---|---|---|
+| Видно в офисе: работает за столом, свободен — в лаунже | ✓ | ✓ |
+| Вопрос / разрешение / план — подходит к «моему столу», ответ оттуда | ✓ | ✓ |
+| «Готово»: закончил задачу → подходит с результатом, «Посмотрел» — уходит | ✓ | ✓ |
+| Режим: Обычный / Авто-правки / План / Auto | ✓ включается на ближайшем чтении/поиске агента | ✓ сразу (+ «Без вопросов») |
+| Модель и effort | — Claude Code не даёт менять снаружи | ✓ на лету |
+| Сообщение агенту | VS Code: открыть сессию с готовым текстом | ✓ |
+| Перейти в окно сессии | ✓ VS Code, вкладка Terminal (macOS) | — |
+
+Наём: «＋ Нанять» → проект, задача, модель, effort, режим — агент запускается через твой установленный
+`claude` под твоим логином. Хоткеи: `I` — мой стол, `N` — нанять, `1–9` — вариант ответа,
+`Enter` — главная кнопка, `J/K` — по очереди, `Esc`. Светлая/тёмная тема — как в системе.
+
+## Приватность
+
+Всё локально: сервер слушает только `127.0.0.1`, видит только сессии этого пользователя
+(`~/.claude`), никуда ничего не отправляет. Мутации защищены токеном на запуск, хуки — отдельным
+токеном в `~/.agentwatch/token`. Сеть нужна один раз — скачать npm-зависимости и текстуры.
+
+## Требования
+
+Claude Code, Node 18+. Лучше всего — macOS (переход в Terminal и VS Code сделан под Mac);
+на Linux работает всё, кроме перехода во вкладку терминала. Windows не проверялся.
+
+## Без плагина (вручную)
+
+```
+git clone https://github.com/Jamshidmirzo/agentwatch && cd agentwatch
+npm install
+./start.sh               # http://localhost:4777 (сам скачает текстуры), лог ~/.agentwatch.log
+npm run hook:install     # хуки в ~/.claude/settings.json (бэкап рядом); убрать: npm run hook:uninstall
+```
+
+Не ставь одновременно и плагин, и `hook:install` — будут двойные хуки (офис склеит дубли, но лучше один способ).
 
 ## Как устроено
-- `lib/registry.js` — внешние сессии: `~/.claude/sessions/*.json` (status busy|idle|waiting), хвост транскрипта, сабагенты.
-- `lib/hosted.js` — наёмные агенты через `@anthropic-ai/claude-agent-sdk`, запускается установленный `~/.local/bin/claude` под твоим логином. Метаданные — `~/.agentwatch/hosted.json`. Наёмные живут, пока жив сервер; после перезапуска — «Нанять → Вернуть на работу».
-- `lib/inbox.js` — очередь «моего стола», общий формат решения для SDK и хука.
-- `lib/hookbridge.js` — http-хук `PermissionRequest`. Claude Code показывает свой диалог **параллельно** с хуком: кто ответил первым, тот и решил. Если ответил в самой сессии — запрос пропадает со стола; если сервер выключен — хук сразу отваливается, всё как обычно.
-- `lib/security.js` — только 127.0.0.1, проверка Host, токен `X-AW-Token` на все мутации, отдельный токен хука в `~/.agentwatch/token`.
-- `office/` — фронт: Three.js-сцена (`scene.js`, `robot.js`), панели (`app.js`), стили.
 
-## Проверено (2.1.296, SDK 0.3.314)
-- SDK работает под логином Claude Code (`apiKeySource: none`).
-- Хук и `canUseTool` срабатывают одновременно; ответ хука с `updatedInput.answers` закрывает AskUserQuestion, в т.ч. в bypassPermissions.
-- E2E: вопрос → ответ со стола → Write → «Разрешить» → файл создан; смена модели/effort/режима; сообщение; resume.
+- `lib/registry.js` — сессии из `~/.claude/sessions/*.json` (busy / idle / waiting), хвост транскрипта, сабагенты.
+- `lib/hosted.js` — нанятые агенты через `@anthropic-ai/claude-agent-sdk`; метаданные в `~/.agentwatch/hosted.json`, живут, пока жив сервер («Нанять → Вернуть на работу» — resume).
+- `lib/inbox.js` — очередь «моего стола», общий формат решения для SDK и хука.
+- `lib/hookbridge.js` — хук `PermissionRequest`: Claude Code показывает свой диалог **параллельно** с хуком, кто ответил первым — тот и решил. Ответил в самой сессии — запрос пропадает со стола; офис выключен — всё как обычно.
+- Смена режима своей сессии: Claude Code меняет режим только ответом на запрос разрешения (`updatedPermissions: setMode`). Офис кладёт флаг `~/.agentwatch/mode/<session>`, `bin/pretool.sh` (PreToolUse, без сети) на ближайшем безопасном инструменте (Read / Grep / Glob…) просит разрешение, и офис сразу отвечает allow + setMode. Тот же скрипт отмечает текущий режим.
+- `lib/reports.js` — «Готово»: переход «работал → свободен».
+- `office/real.js`, `office/humanoid.js` — 3D-офис: PBR-текстуры, HDRI-свет, солнце через окна, мягкие тени, AO, роботы-гуманоиды. Без текстур — простой офис `office/scene.js` (или `?scene=classic`). Демо на тестовых данных: `/office/real.html`.
+- Плагин: `.claude-plugin/` (манифест и маркетплейс), `hooks/hooks.json` (SessionStart → `bin/ensure.js`, PermissionRequest → `bin/permission-hook.js`, PreToolUse → `bin/pretool.sh`), `commands/`.
+
+## Благодарности
+
+Мебель, текстуры и HDRI — [Poly Haven](https://polyhaven.com) (CC0), скачиваются при первом запуске.
+3D — [three.js](https://threejs.org) (MIT). Лицензия проекта — MIT.
+
+---
+
+**English.** AgentWatch is a local 3D office for all your Claude Code sessions: each project is a team
+by the windows; agents walk to *your desk* when they need an answer (question / permission / plan) or
+finish a task, and you reply right there. Switch a session's permission mode (Plan / Auto / Accept edits)
+from the office. Install: `/plugin install agentwatch --marketplace Jamshidmirzo/agentwatch`, then open
+http://localhost:4777 (or run `/agentwatch`). Everything runs on 127.0.0.1; UI is in Russian.

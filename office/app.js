@@ -1,5 +1,8 @@
 // Офис агентов: состояние, SSE, панели «Мой стол» / «Агент» / «Нанять», список.
-import { Office, accentOf } from './scene.js';
+// реалистичный офис, если скачаны текстуры (npm run assets); ?scene=classic — прежний
+const wantClassic = new URLSearchParams(location.search).get('scene') === 'classic';
+const hasAssets = !wantClassic && await fetch('/office/assets/tex/oak_veneer_01_diff.jpg', { method: 'HEAD', cache: 'no-store' }).then((r) => r.ok).catch(() => false);
+const { Office, accentOf } = await import(hasAssets ? './real.js' : './scene.js');
 
 const TOKEN = document.querySelector('meta[name="aw-token"]').content;
 const $ = (s, r = document) => r.querySelector(s);
@@ -18,14 +21,14 @@ function ago(ts) {
   return Math.floor(s / 86400) + ' д';
 }
 
-const MODE_LABEL = { default: 'Обычный', acceptEdits: 'Авто-правки', plan: 'План', bypassPermissions: 'Без вопросов' };
-const KIND_LABEL = { question: 'Вопрос', permission: 'Разрешение', plan: 'План', input: 'Ждёт ответа' };
+const MODE_LABEL = { default: 'Обычный', acceptEdits: 'Авто-правки', plan: 'План', auto: 'Auto', bypassPermissions: 'Без вопросов' };
+const KIND_LABEL = { question: 'Вопрос', permission: 'Разрешение', plan: 'План', input: 'Ждёт ответа', done: 'Готово' };
 const ENV_LABEL = { 'claude-vscode': 'VS Code', cli: 'Terminal', office: 'Офис' };
 const EFFORT_LABEL = { low: 'Low', medium: 'Med', high: 'High', xhigh: 'XHigh', max: 'Max' };
 const FALLBACK_MODELS = [{ value: 'opus', displayName: 'Opus' }, { value: 'sonnet', displayName: 'Sonnet' }, { value: 'haiku', displayName: 'Haiku' }];
 
 const S = {
-  snap: { agents: [], inbox: [], models: null, modes: ['default', 'acceptEdits', 'plan', 'bypassPermissions'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'], hookInstalled: true },
+  snap: { agents: [], inbox: [], models: null, modes: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'], extModes: ['default', 'acceptEdits', 'plan', 'auto'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'], hookInstalled: true },
   sheet: null, view: store.get('view', 'office'), sound: store.get('sound', true), notif: store.get('notif', false),
   seen: new Set(), first: true, busy: new Set(),
 };
@@ -64,12 +67,15 @@ function deskEntries() {
   const out = S.snap.inbox.map((i) => ({ id: i.id, item: i, agent: agentByKey(i.agentKey) || ghost(i), at: i.createdAt }));
   const withItem = new Set(S.snap.inbox.map((i) => i.agentKey));
   for (const a of S.snap.agents) if (a.status === 'waiting' && !withItem.has(a.key)) out.push({ id: 'p:' + a.key, pseudo: true, agent: a, at: a.statusUpdatedAt });
-  return out.sort((x, y) => (x.at || 0) - (y.at || 0));
+  for (const a of S.snap.agents) if (a.report && a.status === 'idle') out.push({ id: 'r:' + a.key, report: true, agent: a, at: a.report.at });
+  return out.sort((x, y) => (x.report ? 1 : 0) - (y.report ? 1 : 0) || (x.at || 0) - (y.at || 0));
 }
 
 // ---------- открыть / закрыть ----------
 function openDesk(sel) { S.sheet = { type: 'desk', sel }; renderSheet(true); }
 function openForAgent(key) {
+  const a = agentByKey(key);
+  if (a?.report && a.status !== 'waiting') { openDesk('r:' + key); office?.focusAgent(key); return; }
   const it = S.snap.inbox.find((i) => i.agentKey === key);
   openDesk(it ? it.id : 'p:' + key);
   office?.focusAgent(key);
@@ -117,24 +123,26 @@ function deskView() {
   const entries = deskEntries();
   if (!entries.find((e) => e.id === S.sheet.sel)) S.sheet.sel = entries[0]?.id;
   const sel = S.sheet.sel;
-  const n = entries.length;
-  const h = head('Мой стол', n ? `${n} ${plural(n, 'запрос ждёт', 'запроса ждут', 'запросов ждут')} вас` : 'Входящих нет');
-  if (!n) return { html: h + '<div class="sh-body"><div class="empty"><div class="big">☕️</div><b>Все при деле</b>Когда агенту понадобится ваш ответ, он встанет и подойдёт к вашему столу.</div></div>', sig: 'desk-empty' };
+  const n = entries.length, nD = entries.filter((e) => e.report).length, nW = n - nD;
+  const sub = [nW ? `${nW} ${plural(nW, 'ждёт', 'ждут', 'ждут')} ответа` : '', nD ? `${nD} ${plural(nD, 'закончил', 'закончили', 'закончили')} работу` : ''].filter(Boolean).join(' · ');
+  const h = head('Мой стол', sub || 'Входящих нет');
+  if (!n) return { html: h + '<div class="sh-body"><div class="empty"><div class="big">☕️</div><b>Все при деле</b>Когда агенту понадобится ваш ответ или он закончит задачу, он подойдёт к вашему столу.</div></div>', sig: 'desk-empty' };
   const rows = entries.map((e) => {
-    const a = e.agent || {}, kind = e.item ? e.item.kind : a.attention?.kind || 'input';
-    const icon = kind === 'permission' ? '!' : kind === 'plan' ? '≡' : kind === 'input' ? '…' : '?';
-    const cls = kind === 'permission' || kind === 'plan' ? 'amber' : kind === 'input' ? 'gray' : '';
+    const a = e.agent || {}, kind = e.report ? 'done' : e.item ? e.item.kind : a.attention?.kind || 'input';
+    const icon = kind === 'done' ? '✓' : kind === 'permission' ? '!' : kind === 'plan' ? '≡' : kind === 'input' ? '…' : '?';
+    const cls = kind === 'done' ? 'green' : kind === 'permission' || kind === 'plan' ? 'amber' : kind === 'input' ? 'gray' : '';
     return `<button class="irow${e.id === sel ? ' sel' : ''}" data-act="sel" data-id="${e.id}"><span class="ic ${cls}">${icon}</span><span class="tx"><b>${esc(a.title || a.name || 'Агент')}</b><small>${esc(a.project || '')} · ${KIND_LABEL[kind] || 'Ждёт'}${e.pseudo ? ' · ответить в сессии' : ''}</small></span><span class="age" data-ago="${e.at}"></span></button>`;
   }).join('');
   const cur = entries.find((e) => e.id === sel);
   const detail = cur ? detailHTML(cur) : '';
-  const sig = 'desk|' + sel + '|' + entries.map((e) => e.id + ':' + (e.agent?.title || '')).join(',') + '|' + JSON.stringify(cur?.item?.input || cur?.agent?.attention || null) + '|' + S.snap.hookInstalled;
+  const sig = 'desk|' + sel + '|' + entries.map((e) => e.id + ':' + (e.agent?.title || '') + (e.report ? e.report.at : '')).join(',') + '|' + JSON.stringify(cur?.report ? cur.agent.report : null) + '|' + JSON.stringify(cur?.item?.input || cur?.agent?.attention || null) + '|' + S.snap.hookInstalled;
   return { html: h + `<div class="sh-body"><div class="ilist">${rows}</div>${detail}</div>`, sig };
 }
 
 function detailHTML(e) {
   const a = e.agent || {};
   const who = `<div class="row" style="margin:-2px 0 10px"><span class="chip" style="gap:6px"><i style="width:8px;height:8px;border-radius:50%;background:${accent(a)}"></i><b>${esc(a.project || '')}</b></span><span class="chip">${ENV_LABEL[a.entrypoint] || ''}${a.kind === 'hosted' ? ' ★' : ''}</span><span class="grow"></span>${a.ghost ? '' : `<button class="btn ghost" data-act="openagent" data-key="${esc(a.key)}">Агент →</button>`}</div>`;
+  if (e.report) return who + reportHTML(a);
   if (e.pseudo) return who + pseudoHTML(a);
   const it = e.item;
   if (it.kind === 'question') return who + questionHTML(it);
@@ -175,6 +183,17 @@ function planHTML(it) {
     <div class="field" data-reveal="revise-${it.id}" hidden><label>Что поправить в плане</label><textarea name="revise-${it.id}" rows="3"></textarea><div class="row"><button class="btn primary" data-act="revise" data-id="${it.id}">Отправить</button></div></div>`;
 }
 
+function reportHTML(a) {
+  const r = a.report || {}, env = ENV_LABEL[a.entrypoint] || 'сессию', hosted = a.kind === 'hosted';
+  const next = hosted && a.controllable
+    ? `<div class="field"><label>Новая задача или ответ</label><textarea name="msg-${esc(a.key)}" rows="2" placeholder="Что дальше?"></textarea><div class="row"><button class="btn" data-act="send" data-key="${esc(a.key)}">Отправить</button></div></div>`
+    : a.entrypoint === 'claude-vscode' ? `<div class="field"><label>Что дальше — откроется в VS Code уже набранным</label><textarea name="prefill-${esc(a.key)}" rows="2" placeholder="Следующая задача…"></textarea><div class="row"><button class="btn" data-act="prefill" data-key="${esc(a.key)}">Открыть с текстом</button></div></div>` : '';
+  return `<div class="card"><div class="kicker"><span class="k green">Готово</span>закончил <span data-ago="${r.at}"></span></div>
+    ${r.prompt ? `<div class="ask-was">${esc(r.prompt)}</div>` : ''}
+    <div class="md">${md(r.text || 'Агент закончил без текстового ответа.')}</div></div>
+    <div class="btnrow"><button class="btn primary big" data-act="ack" data-key="${esc(a.key)}" data-primary>Посмотрел ✓</button>${hosted ? '' : `<button class="btn big" data-act="focus" data-key="${esc(a.key)}">Перейти в ${env}</button>`}</div>${next}`;
+}
+
 function pseudoHTML(a) {
   const att = a.attention || {}, t = a.transcript || {};
   let body;
@@ -213,11 +232,16 @@ function agentView() {
     banner = `<div class="banner${amber ? ' amber' : ''}" data-act="opendesk" data-key="${esc(a.key)}">${KIND_LABEL[k] || 'Ждёт'}: ${esc((a.attention?.text || '').slice(0, 80))}<button class="btn primary">Ответить</button></div>`;
   }
   let controls = '';
+  const seg = (field, list, value, pend) => `<div class="seg wide${S.busy.has(a.key + field) ? ' busy' : ''}">${list.map((v) => `<button class="${v.value === value ? 'on' : ''}${v.value === pend ? ' pend' : ''}" data-act="set" data-field="${field}" data-value="${esc(v.value)}" data-key="${esc(a.key)}" title="${esc(v.title || '')}">${esc(v.label)}</button>`).join('')}</div>`;
+  if (!hosted && S.snap.modeHookInstalled) {
+    const pend = a.pendingMode;
+    controls = `<div class="ctl"><label>Режим</label>${seg('mode', (S.snap.extModes || []).map((m) => ({ value: m, label: MODE_LABEL[m] || m })), a.mode, pend)}</div>`
+      + (pend ? `<div class="note pend">Включится «${esc(MODE_LABEL[pend] || pend)}» на ближайшем чтении или поиске агента${a.status === 'busy' ? '' : ' — когда он продолжит работу'}. <button class="btn ghost" data-act="set" data-field="mode" data-value="" data-key="${esc(a.key)}">Отменить</button></div>` : '');
+  }
   if (hosted && a.controllable) {
     const models = S.snap.models?.length ? S.snap.models : FALLBACK_MODELS;
     const cur = models.find((m) => sameModel(m.value, a.model));
     const efforts = cur?.supportedEffortLevels?.length ? cur.supportedEffortLevels : S.snap.efforts;
-    const seg = (field, list, value, label) => `<div class="seg wide${S.busy.has(a.key + field) ? ' busy' : ''}">${list.map((v) => `<button class="${v.value === value ? 'on' : ''}" data-act="set" data-field="${field}" data-value="${esc(v.value)}" data-key="${esc(a.key)}" title="${esc(v.title || '')}">${esc(v.label)}</button>`).join('')}</div>`;
     controls = `
       <div class="ctl"><label>Модель</label>${seg('model', models.filter((m) => m.value !== 'default' && !/^claude-/.test(m.value)).slice(0, 5).map((m) => ({ value: m.value, label: m.displayName || m.value, title: m.description })), cur?.value)}</div>
       <div class="ctl"><label>Effort</label>${seg('effort', efforts.map((e) => ({ value: e, label: EFFORT_LABEL[e] || e })), a.effort)}</div>
@@ -236,7 +260,7 @@ function agentView() {
     feed = `${t.lastPrompt ? `<div class="ev user">${esc(t.lastPrompt)}</div>` : ''}${t.lastAssistantText ? `<div class="ev text md">${md(t.lastAssistantText)}</div>` : ''}${t.pendingTool ? `<div class="ev tool"><code>${esc(t.pendingTool.name)}</code>${esc(t.pendingTool.summary)}</div>` : ''}`;
   }
   const subs = (a.subagents || []).length ? `<div class="subs"><div style="font-weight:600;color:var(--text)">Сабагенты</div>${a.subagents.map((s) => `<div><i></i>${esc(s.type)} — ${esc(s.description || '')}</div>`).join('')}</div>` : '';
-  const note = hosted ? '' : `<div class="note">Это внешняя сессия (${env}): модель, effort и режим меняются только в ней самой. На вопросы и разрешения можно отвечать со стола${S.snap.hookInstalled ? '' : ' после установки хука'}.</div>`;
+  const note = hosted ? '' : `<div class="note">Внешняя сессия (${env}): модель и effort меняются только в ней самой. ${S.snap.modeHookInstalled ? 'Режим — отсюда: включится, когда агент в следующий раз что-то прочитает или поищет.' : 'Режим отсюда — после <code>npm run hook:install</code>.'} На вопросы и разрешения можно отвечать со стола${S.snap.hookInstalled ? '' : ' после установки хука'}.</div>`;
   let foot;
   if (hosted && a.controllable) {
     foot = `<div class="sh-foot"><div class="composer"><textarea name="msg-${esc(a.key)}" rows="1" placeholder="Сообщение агенту… (⌘↩)"></textarea><button class="btn primary" data-act="send" data-key="${esc(a.key)}" data-primary>Отправить</button></div>
@@ -311,7 +335,10 @@ async function act(btn) {
     case 'set': {
       const key = d.key, field = d.field;
       S.busy.add(key + field); renderSheet(true);
-      try { await api(`/api/agents/${encodeURIComponent(key)}/${field}`, { [field]: d.value }); toast({ model: 'Модель переключена', effort: 'Effort изменён', mode: 'Режим переключён' }[field]); }
+      try {
+        const r = await api(`/api/agents/${encodeURIComponent(key)}/${field}`, { [field]: d.value });
+        toast(r.cancelled ? 'Смена режима отменена' : r.applied === false ? 'Режим включится на ближайшем действии агента' : { model: 'Модель переключена', effort: 'Effort изменён', mode: 'Режим переключён' }[field]);
+      }
       catch (e) { toast(e.message, true); }
       finally { S.busy.delete(key + field); renderSheet(true); }
       return;
@@ -320,6 +347,7 @@ async function act(btn) {
       const text = val('msg-' + d.key); if (!text) return;
       return run(async () => { await api(`/api/agents/${encodeURIComponent(d.key)}/message`, { text }); const ta = $(`[name="${CSS.escape('msg-' + d.key)}"]`, root); if (ta) ta.value = ''; }, 'Отправлено');
     }
+    case 'ack': return run(() => api(`/api/reports/${encodeURIComponent(d.key)}/ack`), 'Отпустил отдыхать');
     case 'interrupt': return run(() => api(`/api/agents/${encodeURIComponent(d.key)}/interrupt`), 'Прервано');
     case 'stop': if (!confirm('Уволить агента? Сессия сохранится — его можно будет вернуть.')) return; return run(() => api(`/api/agents/${encodeURIComponent(d.key)}/stop`), 'Агент уволен');
     case 'cancel': return closeModal();
@@ -378,12 +406,13 @@ document.addEventListener('keydown', (e) => {
 // ---------- шапка, список, бейджи ----------
 function renderBar() {
   const ag = S.snap.agents.filter((a) => a.status !== 'stopped');
-  const nW = deskEntries().length, nB = ag.filter((a) => a.status === 'busy').length, nI = ag.length - ag.filter((a) => a.status === 'waiting').length - nB;
+  const de = deskEntries(), nD = de.filter((e) => e.report).length, nW = de.length - nD, nB = ag.filter((a) => a.status === 'busy').length, nI = ag.length - ag.filter((a) => a.status === 'waiting').length - nB - nD;
   $('#pWait b').textContent = nW; $('#pWait').classList.toggle('on', nW > 0);
+  $('#pDone').hidden = !nD; $('#pDone b').textContent = nD;
   $('#pBusy').textContent = nB; $('#pIdle').textContent = Math.max(0, nI);
   const projects = new Set(ag.map((a) => a.project)).size;
   $('#sub').textContent = `${ag.length} ${plural(ag.length, 'агент', 'агента', 'агентов')} · ${projects} ${plural(projects, 'проект', 'проекта', 'проектов')}`;
-  $('#deskBadge').hidden = !nW; $('#deskBadge').textContent = nW;
+  $('#deskBadge').hidden = !(nW + nD); $('#deskBadge').textContent = nW + nD; $('#deskBadge').classList.toggle('green', !nW && nD > 0);
   document.title = (nW ? `(${nW}) ` : '') + 'Офис агентов';
   favicon(nW, nB);
   const hn = $('#hookNote');
@@ -394,6 +423,7 @@ function renderBar() {
 function renderList() {
   const el = $('#list');
   el.hidden = S.view !== 'list';
+  office?.setPaused?.(S.view === 'list');
   $$('#viewSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.view));
   $('#hint').hidden = S.view === 'list';
   if (S.view !== 'list') return;
@@ -411,6 +441,7 @@ function renderList() {
 $('#viewSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.v; store.set('view', S.view); renderList(); });
 $('#bDesk').addEventListener('click', () => openDesk());
 $('#pWait').addEventListener('click', () => openDesk());
+$('#pDone').addEventListener('click', () => openDesk(deskEntries().find((e) => e.report)?.id));
 $('#bHire').addEventListener('click', () => openHire());
 $('#hookNote').addEventListener('click', () => { store.set('hookNoteHidden', true); $('#hookNote').hidden = true; });
 
@@ -458,8 +489,8 @@ function alerts() {
     if (S.sound) chime();
     if (S.notif && 'Notification' in window && Notification.permission === 'granted') {
       for (const e of fresh.slice(0, 3)) {
-        const a = e.agent || {}, kind = e.item ? e.item.kind : a.attention?.kind;
-        const n = new Notification(`${a.title || a.name || 'Агент'} — ${KIND_LABEL[kind] || 'ждёт вас'}`, { body: `${a.project || ''}: ${(a.attention?.text || '').slice(0, 140)}`, tag: 'aw-' + e.id, silent: true });
+        const a = e.agent || {}, kind = e.report ? 'done' : e.item ? e.item.kind : a.attention?.kind;
+        const n = new Notification(`${a.title || a.name || 'Агент'} — ${KIND_LABEL[kind] || 'ждёт вас'}`, { body: `${a.project || ''}: ${(e.report ? a.report.text : a.attention?.text || '').slice(0, 140)}`, tag: 'aw-' + e.id, silent: true });
         n.onclick = () => { window.focus(); openDesk(e.id); n.close(); };
       }
     }
