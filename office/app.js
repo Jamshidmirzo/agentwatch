@@ -67,6 +67,9 @@ const agentByKey = (k) => S.snap.agents.find((a) => a.key === k);
 // агент с другого компьютера: его флаги, модели и связь берём от той машины
 const mach = (a) => (a?.machine ? (S.snap.machines || []).find((m) => m.id === a.machine) || { id: a.machine, name: a.machineName || 'другой компьютер', online: false } : null);
 const inboxUrl = (id) => '/api/inbox/' + encodeURIComponent(id);
+// отправить текст в саму сессию VS Code / Terminal — как будто напечатал пользователь
+const canSay = (a) => { const M = mach(a); return (a.entrypoint === 'claude-vscode' || (a.entrypoint === 'cli' && (a.tty || M))) && (!M || M.online); };
+const sayBox = (a, label, rows = 2) => canSay(a) ? `<div class="field"><label>${label}</label><textarea name="say-${esc(a.key)}" rows="${rows}" placeholder="Отправится в сессию как ваш запрос (⌘↩)"></textarea><div class="row"><button class="btn primary" data-act="say" data-key="${esc(a.key)}">Отправить</button></div></div>` : '';
 const accent = (a) => accentOf(a?.project || '');
 
 function deskEntries() {
@@ -193,9 +196,9 @@ function planHTML(it) {
 
 function reportHTML(a) {
   const r = a.report || {}, env = ENV_LABEL[a.entrypoint] || 'сессию', hosted = a.kind === 'hosted', M = mach(a);
-  const next = M && !(hosted && a.controllable) ? `<div class="note">Продолжить можно в самой сессии на «${esc(M.name)}».</div>` : hosted && a.controllable
+  const next = !hosted ? sayBox(a, 'Что дальше') : hosted && a.controllable
     ? `<div class="field"><label>Новая задача или ответ</label><textarea name="msg-${esc(a.key)}" rows="2" placeholder="Что дальше?"></textarea><div class="row"><button class="btn" data-act="send" data-key="${esc(a.key)}">Отправить</button></div></div>`
-    : a.entrypoint === 'claude-vscode' ? `<div class="field"><label>Что дальше — откроется в VS Code уже набранным</label><textarea name="prefill-${esc(a.key)}" rows="2" placeholder="Следующая задача…"></textarea><div class="row"><button class="btn" data-act="prefill" data-key="${esc(a.key)}">Открыть с текстом</button></div></div>` : '';
+    : '';
   return `<div class="card"><div class="kicker"><span class="k green">Готово</span>закончил <span data-ago="${r.at}"></span></div>
     ${r.prompt ? `<div class="ask-was">${esc(r.prompt)}</div>` : ''}
     <div class="md">${md(r.text || 'Агент закончил без текстового ответа.')}</div></div>
@@ -213,10 +216,10 @@ function pseudoHTML(a) {
     ? 'Агент закончил и ждёт вашего сообщения — его можно отправить только в самой сессии.'
     : S.snap.hookInstalled ? 'Этот запрос открыт без связи со столом (появился до подключения хука) — ответьте в самой сессии. Новые запросы можно будет решать отсюда.' : 'Хук не установлен — ответить можно только в самой сессии.';
   const env = ENV_LABEL[a.entrypoint] || 'сессию', M = mach(a);
-  if (M) return `<div class="card"><div class="kicker"><span class="k">${KIND_LABEL[att.kind] || 'Ждёт'}</span></div>${body}<div class="note">Ответить можно в самой сессии на «${esc(M.name)}».</div></div>`;
+  if (M) return `<div class="card"><div class="kicker"><span class="k">${KIND_LABEL[att.kind] || 'Ждёт'}</span></div>${body}</div>${att.kind === 'input' ? sayBox(a, 'Ответ') : `<div class="note">Этот запрос открыт без связи со столом — ответьте в самой сессии на «${esc(M.name)}».</div>`}`;
   return `<div class="card"><div class="kicker"><span class="k">${KIND_LABEL[att.kind] || 'Ждёт'}</span></div>${body}<div class="note">${why}</div></div>
     <div class="btnrow"><button class="btn primary big" data-act="focus" data-key="${esc(a.key)}" data-primary>Перейти в ${env}</button></div>
-    ${a.entrypoint === 'claude-vscode' ? `<div class="field"><label>Ответ — откроется в VS Code уже набранным</label><textarea name="prefill-${esc(a.key)}" rows="3" placeholder="Напишите ответ…"></textarea><div class="row"><button class="btn" data-act="prefill" data-key="${esc(a.key)}">Открыть с текстом</button></div></div>` : ''}`;
+    ${att.kind === 'input' ? sayBox(a, 'Ответ', 3) : ''}`;
 }
 
 // ---------- «Агент» ----------
@@ -271,15 +274,15 @@ function agentView() {
     feed = `${t.lastPrompt ? `<div class="ev user">${esc(t.lastPrompt)}</div>` : ''}${t.lastAssistantText ? `<div class="ev text md">${md(t.lastAssistantText)}</div>` : ''}${t.pendingTool ? `<div class="ev tool"><code>${esc(t.pendingTool.name)}</code>${esc(t.pendingTool.summary)}</div>` : ''}`;
   }
   const subs = (a.subagents || []).length ? `<div class="subs"><div style="font-weight:600;color:var(--text)">Сабагенты</div>${a.subagents.map((s) => `<div><i></i>${esc(s.type)} — ${esc(s.description || '')}</div>`).join('')}</div>` : '';
-  const note = hosted ? '' : `<div class="note">${M ? `Сессия на «${esc(M.name)}» (${env})` : `Внешняя сессия (${env})`}: модель и effort меняются только в ней самой. ${mm.modeHook ? 'Режим — отсюда: включится, когда агент в следующий раз что-то прочитает или поищет.' : 'Режим отсюда — после <code>npm run hook:install</code>.'} На вопросы и разрешения можно отвечать со стола${S.snap.hookInstalled ? '' : ' после установки хука'}.</div>`;
+  const note = hosted ? '' : `<div class="note">${M ? `Сессия на «${esc(M.name)}» (${env})` : `Внешняя сессия (${env})`}: модель и effort меняются только в ней самой. ${mm.modeHook ? 'Режим и сообщения — отсюда (режим включится, когда агент в следующий раз что-то прочитает или поищет).' : 'Режим отсюда — после <code>npm run hook:install</code>.'} На вопросы и разрешения можно отвечать со стола${S.snap.hookInstalled ? '' : ' после установки хука'}.</div>`;
   let foot;
   if (hosted && a.controllable) {
     foot = `<div class="sh-foot"><div class="composer"><textarea name="msg-${esc(a.key)}" rows="1" placeholder="Сообщение агенту… (⌘↩)"></textarea><button class="btn primary" data-act="send" data-key="${esc(a.key)}" data-primary>Отправить</button></div>
       <div class="row"><button class="btn" data-act="interrupt" data-key="${esc(a.key)}">Прервать</button><span class="grow"></span><button class="btn danger" data-act="stop" data-key="${esc(a.key)}">Уволить</button></div></div>`;
-  } else if (hosted || M) {
+  } else if (hosted) {
     foot = '';
   } else {
-    foot = `<div class="sh-foot"><div class="row"><button class="btn primary" data-act="focus" data-key="${esc(a.key)}" data-primary>Перейти в ${env}</button></div>${a.entrypoint === 'claude-vscode' ? `<div class="composer"><textarea name="prefill-${esc(a.key)}" rows="1" placeholder="Текст — откроется в VS Code уже набранным"></textarea><button class="btn" data-act="prefill" data-key="${esc(a.key)}">Открыть</button></div>` : ''}</div>`;
+    foot = `<div class="sh-foot">${canSay(a) ? `<div class="composer"><textarea name="say-${esc(a.key)}" rows="1" placeholder="Сообщение в сессию — отправится как ваш запрос (⌘↩)"></textarea><button class="btn primary" data-act="say" data-key="${esc(a.key)}" data-primary>Отправить</button></div>` : ''}${M ? '' : `<div class="row"><button class="btn" data-act="focus" data-key="${esc(a.key)}">Перейти в ${env}</button></div>`}</div>`;
   }
   const html = h + `<div class="sh-ctl"><div class="meta">${chips}</div>${banner}${controls}${note}</div><div class="sh-body"><div class="feed">${feed || '<div class="ev system">Пока тихо</div>'}</div>${subs}</div>${foot}`;
   const { updatedAt, statusUpdatedAt, ...stable } = a;
@@ -373,6 +376,14 @@ async function act(btn) {
     case 'revise': return run(() => api(inboxUrl(d.id), { action: 'revisePlan', feedback: val('revise-' + d.id) }), 'Отправлено на доработку');
     case 'focus': return run(async () => { const r = await api(`/api/agents/${encodeURIComponent(d.key)}/focus`); if (r.result === 'notfound') throw new Error('Вкладка Terminal не найдена'); }, 'Переключаю…');
     case 'prefill': return run(() => api(`/api/agents/${encodeURIComponent(d.key)}/prefill`, { text: val('prefill-' + d.key) }), 'Открываю в VS Code');
+    case 'say': {
+      const text = val('say-' + d.key); if (!text) return;
+      return run(async () => {
+        const r = await api(`/api/agents/${encodeURIComponent(d.key)}/send`, { text });
+        if (r.sent) { const ta = $(`[name="${CSS.escape('say-' + d.key)}"]`, root); if (ta) ta.value = ''; toast('Отправлено в сессию'); }
+        else toast(r.hint || 'Не видно, чтобы сессия приняла запрос — проверьте её', true);
+      });
+    }
     case 'set': {
       const key = d.key, field = d.field;
       S.busy.add(key + field); renderSheet(true);
@@ -432,7 +443,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
   const inField = e.target.matches('textarea, input[type=text]');
   if (inField) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { const ctx = e.target.closest('.composer, .field, .dialog, .sheet'); const b = $('[data-act="send"], [data-act="deny"], [data-act="revise"], [data-act="prefill"], [data-act="hire"]', ctx) || $('[data-primary]', ctx); if (b) { e.preventDefault(); act(b); } }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { const ctx = e.target.closest('.composer, .field, .dialog, .sheet'); const b = $('[data-act="send"], [data-act="say"], [data-act="deny"], [data-act="revise"], [data-act="prefill"], [data-act="hire"]', ctx) || $('[data-primary]', ctx); if (b) { e.preventDefault(); act(b); } }
     if (e.key === 'Escape') e.target.blur();
     return;
   }

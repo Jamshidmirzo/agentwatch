@@ -1,6 +1,6 @@
 {
   "name": "agentwatch",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "3D-офис для всех сессий Claude Code: «мой стол» для ответов агентам, смена режима, «Готово»",
   "main": "server.js",
