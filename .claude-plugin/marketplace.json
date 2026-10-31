@@ -1,13 +1,18 @@
 {
   "name": "agentwatch",
-  "owner": { "name": "Jamshidmirzo", "url": "https://github.com/Jamshidmirzo" },
-  "metadata": { "description": "AgentWatch — 3D-офис для сессий Claude Code" },
+  "owner": {
+    "name": "Jamshidmirzo",
+    "url": "https://github.com/Jamshidmirzo"
+  },
+  "metadata": {
+    "description": "AgentWatch — 3D-офис для сессий Claude Code"
+  },
   "plugins": [
     {
       "name": "agentwatch",
       "source": "./",
       "description": "3D-офис для всех сессий Claude Code: «мой стол» для ответов агентам, смена режима, «Готово».",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "category": "productivity"
     }
   ]

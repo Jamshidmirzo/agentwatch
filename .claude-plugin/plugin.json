@@ -1,10 +1,20 @@
 {
   "name": "agentwatch",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "3D-офис для всех сессий Claude Code на этом компьютере: команды по проектам, агенты идут к «моему столу» с вопросами, разрешениями, планами и «Готово»; ответы прямо оттуда, смена режима (План/Auto), наём своих агентов.",
-  "author": { "name": "Jamshidmirzo", "url": "https://github.com/Jamshidmirzo" },
+  "author": {
+    "name": "Jamshidmirzo",
+    "url": "https://github.com/Jamshidmirzo"
+  },
   "homepage": "https://github.com/Jamshidmirzo/agentwatch",
   "repository": "https://github.com/Jamshidmirzo/agentwatch",
   "license": "MIT",
-  "keywords": ["dashboard", "office", "agents", "permissions", "plan-mode", "3d"]
+  "keywords": [
+    "dashboard",
+    "office",
+    "agents",
+    "permissions",
+    "plan-mode",
+    "3d"
+  ]
 }

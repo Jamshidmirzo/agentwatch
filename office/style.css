@@ -281,3 +281,20 @@ textarea:focus, input[type=text]:focus { border-color: var(--blue-2); background
 .zone-label em.d { color: #1f8a3c; background: rgba(52, 199, 89, .14); }
 .seg button.pend { box-shadow: inset 0 0 0 1.5px var(--blue-2); }
 .note.pend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text); }
+
+/* «Компьютеры» */
+.badge.mini { min-width: 0; height: 15px; padding: 0 4px; font-size: 9.5px; position: absolute; transform: translate(10px, -9px); background: #248a3d; }
+.badge.mini.off { background: var(--dim); }
+#bMachines { position: relative; }
+.pill.remote { cursor: pointer; background: rgba(10, 132, 255, .12); color: var(--blue-2); }
+.pill.remote i { background: var(--blue-2); animation: pulse 1.6s ease-in-out infinite; }
+.msect { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.msect h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: -.01em; }
+.mrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.mrow .tx { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.mrow .tx small { color: var(--muted); font-size: 12px; }
+.mdot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; }
+.mdot.on { background: #34c759; box-shadow: 0 0 0 3px rgba(52, 199, 89, .18); }
+.mswitch { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 4px 0 6px; cursor: pointer; }
+.mswitch input { width: 16px; height: 16px; accent-color: var(--blue-2); }
+.dialog textarea.mono { font: 12px/1.45 var(--mono, ui-monospace, Menlo, monospace); word-break: break-all; }

@@ -1,0 +1,23 @@
+[Unit]
+Description=AgentWatch relay (пересылает зашифрованные кадры между офисами)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/agentwatch-relay/relay.js
+EnvironmentFile=/etc/agentwatch-relay.env
+Environment=PORT=8080
+Environment=HOST=127.0.0.1
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=200M
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

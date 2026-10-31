@@ -1,0 +1,11 @@
+{
+  "name": "agentwatch-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ретранслятор AgentWatch: пересылает зашифрованные кадры между офисами двух компьютеров, ничего не читает",
+  "main": "relay.js",
+  "license": "MIT",
+  "scripts": { "start": "node relay.js", "test": "node --test test/*.test.js" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "ws": "8.18.0" }
+}

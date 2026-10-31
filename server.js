@@ -13,6 +13,8 @@ const { Inbox } = require('./lib/inbox');
 const { HostedManager, MODES, EFFORTS } = require('./lib/hosted');
 const { HookBridge, EXT_MODES } = require('./lib/hookbridge');
 const { Reports } = require('./lib/reports');
+const { createActions } = require('./lib/actions');
+const { RemoteManager } = require('./lib/remote');
 const { RUN_TOKEN, hookToken, safeEq, hostOk } = require('./lib/security');
 
 const PORT = Number(process.env.AGENTWATCH_PORT || process.env.PORT || 4777);
@@ -40,7 +42,8 @@ function checkHook() {
   } catch { hookInstalled = modeHookInstalled = process.env.AGENTWATCH_PLUGIN === '1'; }
 }
 
-function snapshot() {
+// снимок агентов этого компьютера; snapshot() добавляет к нему агентов подключённых компьютеров
+function localSnapshot() {
   const h = hosted.list();
   const regBySession = new Map(external.map((s) => [s.sessionId, s]));
   for (const a of h) { // сабагенты наёмных берём из реестра, если SDK их не прислал
@@ -64,11 +67,13 @@ function snapshot() {
   for (const a of agents) a.report = reports.get(a.key);
   return { at: Date.now(), agents, inbox: items, models: hosted.models, modes: MODES, extModes: EXT_MODES, efforts: EFFORTS, hookInstalled, modeHookInstalled };
 }
+function snapshot() { return remote ? remote.merge(localSnapshot()) : localSnapshot(); }
 
 // ---------- SSE ----------
 const clients = new Set();
 let pushTimer = null;
 function schedule() {
+  remote?.localChanged();
   if (pushTimer) return;
   pushTimer = setTimeout(() => {
     pushTimer = null;
@@ -108,62 +113,61 @@ function within(base, rel) {
   const p = path.resolve(base, '.' + path.sep + rel);
   return p.startsWith(base + path.sep) ? p : null;
 }
-const findExternal = (key) => external.find((s) => s.key === key);
 
 // ---------- API ----------
+const actions = createActions({ inbox, hosted, bridge, reports, registry, getExternal: () => external, getModeHook: () => modeHookInstalled, schedule });
+// lib/remote.js — агенты других компьютеров (ключи и id с префиксом «m:<компьютер>:») и доступ извне к этому
+let remote = null;
+try { remote = new RemoteManager({ actions, getLocal: localSnapshot }); remote.on('change', schedule); } catch (e) { console.error('remote', e.message); }
+
+const dec = (s) => decodeURIComponent(s);
+function routeOf(p, body) {
+  if (p === '/api/hire') { const { machine, ...args } = body; return { op: 'hire', args, machine }; }
+  let m = p.match(/^\/api\/resume\/([^/]+)$/);
+  if (m) return { op: 'resume', args: { id: dec(m[1]), prompt: body.prompt }, machine: body.machine };
+  m = p.match(/^\/api\/inbox\/([^/]+)$/);
+  if (m) return { op: 'inbox.resolve', args: { id: dec(m[1]), decision: body } };
+  m = p.match(/^\/api\/reports\/([^/]+)\/ack$/);
+  if (m) return { op: 'report.ack', args: { key: dec(m[1]) } };
+  m = p.match(/^\/api\/agents\/([^/]+)\/([a-z]+)$/);
+  if (m) return { op: 'agent', args: { key: dec(m[1]), action: m[2], body } };
+  return null;
+}
+// ключ/id вида «m:<компьютер>:<локальный>» — действие уходит на тот компьютер
+async function dispatch({ op, args, machine }) {
+  const ref = args.id ?? args.key;
+  const pm = typeof ref === 'string' && ref.match(/^m:([^:]+):(.+)$/);
+  const mid = machine || (pm && pm[1]);
+  if (!mid) return actions.perform(op, args);
+  if (!remote) throw new Error('удалённые компьютеры не подключены');
+  const local = { ...args };
+  if (pm) { if ('id' in args) local.id = pm[2]; else local.key = pm[2]; }
+  const r = await remote.call(mid, op, local);
+  if (r && typeof r.key === 'string') r.key = `m:${mid}:${r.key}`;
+  return r;
+}
+
 async function api(req, res, url) {
   const p = url.pathname;
   if (req.method === 'GET' && p === '/api/state') return json(res, 200, snapshot());
   // ключ меняется при каждом запуске; открытая вкладка забирает новый (читать может только своя страница — Host и same-origin)
   if (req.method === 'GET' && p === '/api/token') return json(res, 200, { token: RUN_TOKEN });
   if (req.method === 'GET' && p === '/api/projects') {
-    const live = [...external.map((s) => s.cwd), ...hosted.list().map((a) => a.cwd)];
-    return json(res, 200, { projects: registry.recentProjects(live), archive: hosted.archiveList() });
+    const mid = url.searchParams.get('m');
+    return json(res, 200, await dispatch({ op: 'projects', args: {}, machine: mid || undefined }));
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method' });
   if (!safeEq(req.headers['x-aw-token'], RUN_TOKEN)) return json(res, 403, { error: 'token' });
   const body = await readBody(req);
-
-  if (p === '/api/hire') {
-    const a = await hosted.hire(body);
-    return json(res, 200, { ok: true, key: a.key });
+  if (p.startsWith('/api/remote/')) {
+    if (!remote) throw new Error('удалённый доступ недоступен');
+    return json(res, 200, { ok: true, ...(await remote.manage(p.slice('/api/remote/'.length), body)) });
   }
-  let m = p.match(/^\/api\/resume\/([0-9a-f]+)$/);
-  if (m) { const a = await hosted.resume(m[1], body.prompt); return json(res, 200, { ok: true, key: a.key }); }
-
-  m = p.match(/^\/api\/inbox\/([0-9a-f]+)$/);
-  if (m) {
-    inbox.resolve(m[1], body);
-    return json(res, 200, { ok: true });
-  }
-
-  m = p.match(/^\/api\/reports\/([^/]+)\/ack$/);
-  if (m) { reports.ack(decodeURIComponent(m[1])); schedule(); return json(res, 200, { ok: true }); }
-
-  m = p.match(/^\/api\/agents\/([^/]+)\/([a-z]+)$/);
-  if (m) {
-    const key = decodeURIComponent(m[1]), action = m[2];
-    if (key.startsWith('h:')) {
-      const a = hosted.get(key);
-      if (!a) return json(res, 404, { error: 'агент не найден' });
-      if (action === 'message') { if (!body.text?.trim()) throw new Error('пустое сообщение'); a.send(body.text.trim()); }
-      else if (action === 'model') await a.setModel(body.model);
-      else if (action === 'effort') await a.setEffort(body.effort);
-      else if (action === 'mode') await a.setMode(body.mode);
-      else if (action === 'interrupt') await a.interrupt();
-      else if (action === 'stop') a.stop();
-      else return json(res, 400, { error: 'неизвестное действие' });
-      schedule();
-      return json(res, 200, { ok: true });
-    }
-    const s = findExternal(key);
-    if (!s) return json(res, 404, { error: 'сессия не найдена' });
-    if (action === 'focus') return registry.focus(s, (err, info) => json(res, err ? 500 : 200, err ? { error: err.message } : { ok: true, ...info }));
-    if (action === 'mode') { if (!modeHookInstalled) throw new Error('нужен хук смены режима: npm run hook:install'); const r = body.mode ? bridge.setMode(s, body.mode) : (bridge.clearMode(s.sessionId), { cancelled: true }); return json(res, 200, { ok: true, ...r }); }
-    if (action === 'prefill') return registry.openWithPrompt(s, String(body.text || ''), (err, info) => json(res, err ? 500 : 200, err ? { error: err.message } : { ok: true, ...info }));
-    return json(res, 400, { error: 'внешней сессии модель и effort меняются только в ней самой' });
-  }
-  return json(res, 404, { error: 'not found' });
+  const route = routeOf(p, body);
+  if (!route) return json(res, 404, { error: 'not found' });
+  const r = await dispatch(route);
+  schedule();
+  return json(res, 200, { ok: true, ...r });
 }
 
 // ---------- server ----------
@@ -212,12 +216,14 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`AgentWatch → http://localhost:${PORT}`);
+  remote?.start();
   registry.refreshTtyMap();
   scanLoop();
   setInterval(scanLoop, SCAN_MS);
 });
 
 function shutdown() {
+  remote?.stopAll();
   bridge.releaseAll();
   hosted.stopAll();
   setTimeout(() => process.exit(0), 300);

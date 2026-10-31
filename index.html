@@ -21,6 +21,7 @@
   </div>
   <div class="pills">
     <button class="pill wait" id="pWait" title="Ждут ответа — открыть мой стол"><i></i><b>0</b> ждут</button>
+    <button class="pill remote" id="pRemote" hidden title="Этим компьютером управляют с другого — открыть настройки"><i></i><span>управляют</span></button>
     <button class="pill done" id="pDone" title="Закончили работу — посмотреть на моём столе" hidden><i></i><b>0</b> готово</button>
     <span class="pill busy"><i></i><b id="pBusy">0</b> работают</span>
     <span class="pill idle"><i></i><b id="pIdle">0</b> свободны</span>
@@ -29,6 +30,7 @@
     <div class="seg" id="viewSeg"><button data-v="office" class="on">Офис</button><button data-v="list">Список</button></div>
     <button class="btn ghost icon" id="tSound" title="Звук"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="w" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/></svg></button>
     <button class="btn ghost icon" id="tNotif" title="Уведомления"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button>
+    <button class="btn ghost icon" id="bMachines" title="Другие компьютеры"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span class="badge mini" id="machBadge" hidden>0</span></button>
     <button class="btn" id="bDesk">Мой стол <span class="badge" id="deskBadge" hidden>0</span></button>
     <button class="btn primary" id="bHire">＋ Нанять</button>
   </div>
