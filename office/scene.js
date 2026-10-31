@@ -25,7 +25,17 @@ const mixHex = (a, b, k) => {
   return '#' + [16, 8, 0].map((sh) => Math.round(ch(pa, sh) * (1 - k) + ch(pb, sh) * k).toString(16).padStart(2, '0')).join('');
 };
 const hash = (s) => { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
-export const accentOf = (project) => ACCENTS[hash(project) % ACCENTS.length];
+const accentMap = new Map();
+export const accentOf = (project) => accentMap.get(project) || ACCENTS[hash(project) % ACCENTS.length];
+// у двух проектов не должно быть одного цвета: при совпадении хэша берём следующий свободный
+function assignAccents(projects) {
+  const used = new Set();
+  for (const p of [...projects].sort()) {
+    let i = hash(p) % ACCENTS.length;
+    for (let k = 0; k < ACCENTS.length && used.has(ACCENTS[i]); k++) i = (i + 1) % ACCENTS.length;
+    used.add(ACCENTS[i]); accentMap.set(p, ACCENTS[i]);
+  }
+}
 const V = (x, z, y = 0) => new THREE.Vector3(x, y, z);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const lerpAngle = (a, b, k) => { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * k; };
@@ -168,6 +178,7 @@ export class Office {
 
   // ---------- раскладка ----------
   computeLayout(groups) {
+    assignAccents(groups.map(([p]) => p));
     const zones = groups.map(([project, list]) => {
       const cols = Math.max(2, Math.ceil(list.length / 2));
       return { project, list, cols, w: cols * SEAT_W + ZONE_PAD * 2, d: ZONE_D, accent: accentOf(project) };
@@ -246,7 +257,8 @@ export class Office {
       this.plant(farX, z.z0 + 0.5, 1); this.plant(farX, z.z1 - 0.45, 0.85);
       // табличка
       const el = document.createElement('div'); el.className = 'zone-label';
-      el.innerHTML = `<i style="background:${z.accent}"></i><b>${esc(z.project)}</b><span>${z.list.length}</span>`;
+      el.innerHTML = `<i style="background:${z.accent}"></i><b>${esc(z.project)}</b><span class="zs"></span>`;
+      z.labelEl = el;
       const lab = new CSS2DObject(el); lab.position.set(z.cx, 2.75, z.z0 + 0.18); S.add(lab);
     }
     for (const seat of L.seats.values()) this.buildDesk(seat);
@@ -298,6 +310,11 @@ export class Office {
     for (let i = 0; i < 5; i++) { const leg = cadd(new THREE.BoxGeometry(0.035, 0.03, 0.3), m.metal, 0, 0.04, 0); leg.rotation.y = (i / 5) * Math.PI * 2; leg.translateZ(0.13); }
     this.static.add(g);
     seat.screen = screen;
+    // свечение пола под работающим — видно с любого ракурса (дальний ряд сидит к камере спиной)
+    const halo = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 2.1), this.haloMat());
+    halo.rotation.x = -Math.PI / 2; halo.position.set(seat.x, 0.012, seat.seatZ + (seat.north ? -0.2 : 0.2)); // от стола, чтобы стол не закрывал
+    halo.renderOrder = 1; halo.visible = false; this.static.add(halo);
+    seat.halo = halo;
     // табличка с именем — на краю стола со стороны прохода
     const el = document.createElement('div'); el.className = 'seat-tag';
     el.addEventListener('click', (e) => { e.stopPropagation(); this.h.onAgent?.(seat.key); });
@@ -305,6 +322,13 @@ export class Office {
     el.addEventListener('mouseleave', () => this.setHover(null));
     const tag = new CSS2DObject(el); tag.position.set(seat.x, 1.85, seat.seatZ); this.static.add(tag);
     seat.tagEl = el;
+  }
+
+  haloMat() {
+    return this._haloMat ??= new THREE.MeshBasicMaterial({
+      map: canvasTex(128, 128, (x) => { const g = x.createRadialGradient(64, 64, 4, 64, 64, 64); g.addColorStop(0, 'rgba(10,132,255,.8)'); g.addColorStop(0.5, 'rgba(10,132,255,.34)'); g.addColorStop(1, 'rgba(10,132,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 128); }),
+      transparent: true, depthWrite: false, toneMapped: false,
+    });
   }
 
   buildMyDesk(L) {
@@ -421,12 +445,29 @@ export class Office {
     for (const A of this.agents.values()) if (!seen.has(A.key) && !A.leaving) { A.leaving = true; A.want = 'door'; }
     this.first = false;
 
+    this.paintZones(L, agents);
     this.inboxCount = waiting.length;
     this.deskLines = waiting.map((a) => a.title || a.name || a.project);
     this.drawDeskScreen();
     const badge = this.deskLabel?.querySelector('.badge');
     if (badge) { badge.hidden = !waiting.length; badge.textContent = waiting.length; }
     this.deskLabel?.classList.toggle('alert', waiting.length > 0);
+  }
+
+  paintZones(L, agents) {
+    const plural = (n, one, many) => n === 1 ? one : many;
+    for (const z of L.zones) {
+      if (!z.labelEl) continue;
+      const list = agents.filter((a) => a.project === z.project);
+      const busy = list.filter((a) => a.status === 'busy').length, wait = list.filter((a) => a.status === 'waiting').length;
+      const html = (wait ? `<em class="w"><s></s>${wait} ${plural(wait, 'ждёт', 'ждут')}</em>` : '')
+        + (busy ? `<em class="b"><s></s>${busy} ${plural(busy, 'работает', 'работают')}</em>` : '')
+        + (busy || wait ? `<span>из ${list.length}</span>` : `<span>${list.length === 1 ? 'свободен' : `${list.length} свободны`}</span>`);
+      const box = z.labelEl.querySelector('.zs');
+      if (box._html !== html) { box.innerHTML = html; box._html = html; }
+      z.labelEl.classList.toggle('active', busy > 0);
+      z.labelEl.classList.toggle('alert', wait > 0);
+    }
   }
 
   paintSeat(A) {
@@ -436,11 +477,15 @@ export class Office {
     const amber = att === 'permission' || att === 'plan';
     s.screen.material = a.status === 'waiting' ? (att === 'plan' ? this.screens.plan : amber ? this.screens.amber : this.screens.ask)
       : a.status === 'busy' ? this.screens.code : (Date.now() - (a.statusUpdatedAt || 0) > 10 * 60e3 ? this.screens.sleep : this.screens.idle);
+    if (s.halo) s.halo.visible = a.status === 'busy';
     if (s.tagEl) {
       const title = a.title || a.name || 'Агент';
       const away = a.status === 'waiting';
-      const html = `<i class="st ${a.status}${amber ? ' amber' : ''}"></i>${a.kind === 'hosted' ? '<em>★</em>' : ''}<span>${esc(title.length > 28 ? title.slice(0, 27) + '…' : title)}</span>${away ? '<small>у вашего стола</small>' : ''}`;
+      const busy = a.status === 'busy';
+      const html = `<i class="st ${a.status}${amber ? ' amber' : ''}"></i>${a.kind === 'hosted' ? '<em>★</em>' : ''}<span>${esc(title.length > 28 ? title.slice(0, 27) + '…' : title)}</span>${busy ? '<u class="dots"><b></b><b></b><b></b></u>' : ''}${away ? '<small>у вашего стола</small>' : ''}`;
       if (s.tagEl._html !== html) { s.tagEl.innerHTML = html; s.tagEl._html = html; }
+      const t = a.transcript || {};
+      s.tagEl.title = busy ? (t.pendingTool ? `Работает · ${t.pendingTool.name}: ${t.pendingTool.summary || ''}` : 'Работает') : '';
       s.tagEl.className = `seat-tag ${a.status}${this.hoverKey === a.key || this.extHover === a.key ? ' hl' : ''}`;
     }
   }
@@ -653,6 +698,7 @@ export class Office {
     const dt = Math.min(0.1, this.clock.getDelta());
     this.codeT += dt;
     if (this.codeT > 0.14) { this.codeT = 0; this.codeOff++; this.screens.tex.code.userData.draw(this.codeOff); }
+    if (this._haloMat) this._haloMat.opacity = 0.7 + 0.3 * Math.sin(nowMs / 1000 * 2.6);
     for (const A of [...this.agents.values()]) {
       this.stepAgent(A, dt, nowMs);
       if (A.gone) {
