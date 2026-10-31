@@ -114,6 +114,8 @@ const findExternal = (key) => external.find((s) => s.key === key);
 async function api(req, res, url) {
   const p = url.pathname;
   if (req.method === 'GET' && p === '/api/state') return json(res, 200, snapshot());
+  // ключ меняется при каждом запуске; открытая вкладка забирает новый (читать может только своя страница — Host и same-origin)
+  if (req.method === 'GET' && p === '/api/token') return json(res, 200, { token: RUN_TOKEN });
   if (req.method === 'GET' && p === '/api/projects') {
     const live = [...external.map((s) => s.cwd), ...hosted.list().map((a) => a.cwd)];
     return json(res, 200, { projects: registry.recentProjects(live), archive: hosted.archiveList() });

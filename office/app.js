@@ -4,7 +4,7 @@ const wantClassic = new URLSearchParams(location.search).get('scene') === 'class
 const hasAssets = !wantClassic && await fetch('/office/assets/tex/oak_veneer_01_diff.jpg', { method: 'HEAD', cache: 'no-store' }).then((r) => r.ok).catch(() => false);
 const { Office, accentOf } = await import(hasAssets ? './real.js' : './scene.js');
 
-const TOKEN = document.querySelector('meta[name="aw-token"]').content;
+let TOKEN = document.querySelector('meta[name="aw-token"]').content;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,10 +34,14 @@ const S = {
 };
 
 // ---------- API ----------
-async function api(path, body) {
+async function api(path, body, retried) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AW-Token': TOKEN }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  if (r.status === 403 && j.error === 'token' && !retried) { // офис перезапустили — берём новый ключ и повторяем
+    const t = await fetch('/api/token', { cache: 'no-store' }).then((x) => x.json()).catch(() => null);
+    if (t?.token) { TOKEN = t.token; return api(path, body, true); }
+  }
+  if (!r.ok) throw new Error(j.error === 'token' ? 'Офис перезапустился — обновите страницу (⌘R)' : j.error || 'HTTP ' + r.status);
   return j;
 }
 function toast(msg, err) {
@@ -531,4 +535,4 @@ function connect() {
   es.onerror = () => { $('#sub').textContent = 'нет связи с сервером…'; es.close(); setTimeout(connect, 2000); };
 }
 connect();
-window.__aw = { S, office, openDesk, openAgent, openHire };
+window.__aw = { S, office, openDesk, openAgent, openHire, api };
